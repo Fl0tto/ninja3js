@@ -1,0 +1,20 @@
+{
+  "name": "fluid-fire-webgpu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --configLoader runner",
+    "build": "tsc --noEmit && vite build --configLoader runner",
+    "preview": "vite preview --configLoader runner"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.0",
+    "@webgpu/types": "^0.1.72",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07090c" />
+    <link rel="icon" href="data:," />
+    <title>Ground Flow — WebGPU Benchmark</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="stage" aria-label="Interactive WebGPU ground-flow simulation"></canvas>
+      <section id="unsupported" hidden>
+        <div>
+          <p class="eyebrow">WEBGPU REQUIRED</p>
+          <h1>This browser cannot run the fluid benchmark.</h1>
+          <p>Open it in a current Chrome or Edge build with WebGPU enabled.</p>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
