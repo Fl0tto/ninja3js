@@ -9,7 +9,8 @@ contains the demo's implementation history.
 ## Using it as a package
 
 ```sh
-pnpm add github:Fl0tto/ninja3js#v0.2.0     # or link a sibling checkout: "ninja3js": "link:../ninja3js"
+pnpm add git+https://github.com/Fl0tto/ninja3js.git#v0.2.0   # or #<commit sha>
+# or link a sibling checkout while hacking on both: "ninja3js": "link:../ninja3js"
 ```
 
 `three` is a peer dependency (`>=0.185 <0.190`); the package ships TypeScript source through its
