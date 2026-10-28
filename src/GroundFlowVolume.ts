@@ -604,7 +604,8 @@ export class GroundFlowVolume {
     const responseAt = (at: any, kind: 'sand' | 'snow'): any => {
       const fieldUv = at.sub(this.worldCenter).div(vec2(this.flow.width, this.flow.height)).add(0.5);
       const edge = fieldUv.min(float(1).sub(fieldUv));
-      return this.groundTextures[kind].sample(fieldUv.clamp(0, 1))
+      // `as any`: three 0.186's TextureNode.sample() typing lost the ShaderNodeObject wrapper.
+      return (this.groundTextures[kind].sample(fieldUv.clamp(0, 1)) as any)
         .mul(smoothstep(0, 0.08, edge.x.min(edge.y)));
     };
     const weightAt = (at: any, kind: 'sand' | 'snow'): any => this.patchWeightAt(at, kind).mul(this.terrainResponseWeight);

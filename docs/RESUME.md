@@ -1,4 +1,30 @@
-# Active checkpoint: 2026-09-14
+# Active checkpoint: 2026-10-28
+
+FN resumed as a package for a different host than planned: the arena 3D battle client
+(Fl0tto/arena-showdown, M4). The MMO return milestone below still stands for the MMO.
+
+## Package boundary, realised
+
+- `src/index.ts` is the library entry; `package.json` is `ninja3js@0.2.0` with `three` as a peer
+  (`>=0.185 <0.190`, developed on 0.185.1, consumed on 0.186) and TypeScript source in `exports`.
+- `GroundMist` (new) is the host contract from the 14 Sep review: fluid field, volume rendering and
+  window placement inside; the host supplies renderer, scene, timing, actor positions and events in
+  world units. Fixed or scrolling window; slot allocation and lifetimes are the library's problem.
+- `FluidFire` gained `visuals: false` (no particles, slices, decor or their compute), uniform
+  `bounds` instead of the DungeonLayout import (the demo passes the room), an ambient density floor
+  with a world-anchored ripple, and per-stamp heat so renderers get a second colour. The demo's
+  behaviour is unchanged.
+- WebGL2 degraded behaviour is decided: no fluid at all. The host checks `GroundMist.isSupported`.
+- Headless verification now exists on Linux: `tools/mist-smoke.mjs` runs the full Chromium on
+  SwiftShader's Vulkan ICD with real WebGPU compute. Flags that keep Dawn's instance alive:
+  `--enable-unsafe-webgpu --enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader
+  --use-gl=angle --enable-unsafe-swiftshader`. Expect about one frame per second.
+- Known upstream quirk (three r186, MSAA): the first frame of a `viewportLinearDepth` material binds
+  a 1x1 placeholder depth texture and Dawn logs one validation error per volume; later frames are
+  clean.
+- Surface/room identity and multi-floor isolation remain open; `bounds` is one rectangle.
+
+## Previous checkpoint: 2026-09-14
 
 FN development is paused by user decision while the MMO reaches a minimal connected browser experience. This supersedes the next-feature suggestions in HANDOFF.md; that file retains demo implementation and validation history.
 

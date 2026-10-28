@@ -1,6 +1,49 @@
-# Fluid Fire WebGPU benchmark
+# ninja3js
 
-**Current status:** development paused pending a runnable MMO integration host. Read [the active resume checkpoint](./docs/RESUME.md) before continuing; [HANDOFF.md](./docs/HANDOFF.md) contains earlier implementation history.
+Stylised ground mist, GPU fluid and ground-response effects for Three.js WebGPU. Clean-room,
+FluidNinja-inspired. **Current status (Oct 2026):** shipped as a package for its first host, the
+[arena](https://github.com/Fl0tto/arena-showdown) 3D battle client (its M4). Read
+[the resume checkpoint](./docs/RESUME.md) before continuing; [HANDOFF.md](./docs/HANDOFF.md)
+contains the demo's implementation history.
+
+## Using it as a package
+
+```sh
+pnpm add github:Fl0tto/ninja3js#v0.2.0     # or link a sibling checkout: "ninja3js": "link:../ninja3js"
+```
+
+`three` is a peer dependency (`>=0.185 <0.190`); the package ships TypeScript source through its
+`exports`, so any Vite/esbuild host consumes it without a build step. With a `link:` checkout, dedupe
+`three` in the host's Vite config and map `three*` to the host's `@types/three` in its tsconfig
+`paths`, or the two checkouts bring two copies.
+
+```ts
+import { GroundMist } from 'ninja3js';
+
+const mist = new GroundMist(renderer, { width: 16, depth: 16, height: 0.9, resolution: 128 });
+scene.add(mist.group);
+mist.setAmbient(0.4);                                   // baseline blanket
+mist.setPalette('#dfe7f1', '#ff9a4a');                  // cool mist, hot smoke
+mist.setWind(new THREE.Vector3(2, 0, 0.5));
+mist.emit(position, 0.8, 1, { heat: 1.2, duration: 1.5 }); // a smoke source for 1.5 s
+mist.blast(position, 2.5, 5);                           // shove the mist outward
+mist.mover('player', position, velocity, 0.5);          // a wake, every frame while moving
+mist.update(dt);                                        // before renderer.render()
+```
+
+`GroundMist` is the host-facing class: one bounded X/Z window (fixed, or scrolling with
+`follow()`), world units everywhere, slot allocation and lifetimes inside. It needs the WebGPU
+backend (`GroundMist.isSupported(renderer)`); on a WebGL2 fallback the host simply does not create
+one. `mist.html` is the smallest host example and `npm run smoke:mist` renders it headless on
+SwiftShader's Vulkan ICD (real WebGPU, no GPU) and screenshots it.
+
+The lower layers are exported too: `FluidFire` (the solver, with `visuals: false` for hosts that
+render the fields themselves, configurable `bounds`, an ambient density floor and per-stamp heat),
+`GroundFlowVolume` and `GroundResponseField` (the demo's fog/sand/snow/grass renderer),
+`SimulationWindow`, `TerrainHeight`. Gameplay (the training chamber, sentinel, controls, benchmark
+UI, demo terrain) stays in the demo.
+
+## The demo
 
 A standalone Three.js/WebGPU prototype of a 2.5D fire-and-smoke pipeline:
 
@@ -12,7 +55,7 @@ The active implementation direction is a player-centred, landscape-aligned flow 
 
 The implementation is clean-room. The supplied FluidNinja LIVE 2 project was used to identify architecture and visual techniques; no Unreal or FluidNinja source was copied into the shaders. See [the reference analysis](./docs/FLUIDNINJA_REFERENCE.md).
 
-## Run
+### Run
 
 Requirements: a current Chrome or Edge build with WebGPU support, plus Node.js 20 or newer.
 

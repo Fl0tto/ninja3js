@@ -1,6 +1,5 @@
 ﻿import * as THREE from 'three/webgpu';
 import { slashDistanceNode } from './SlashShape';
-import { roomMaskNode } from './DungeonLayout';
 import {
   Fn,
   If,
@@ -41,7 +40,29 @@ export interface FluidFireOptions {
   particleCount?: number;
   width?: number;
   height?: number;
+  /**
+   * false skips the fire benchmark's own visuals (sprite particles, fog slices,
+   * debug planes, decor) and their compute passes. The fields still simulate,
+   * for hosts that render them through GroundMist or GroundFlowVolume.
+   */
+  visuals?: boolean;
+  /**
+   * World-space rectangle (X/Z metres) outside which ground flow is masked
+   * when setRoomBounds() enables it. Defaults to the demo training room.
+   */
+  bounds?: FluidBounds;
 }
+
+/** Axis-aligned world-space X/Z rectangle, in metres. */
+export interface FluidBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/** The demo training room; kept here so FluidFire does not depend on the demo layout. */
+export const DEFAULT_FLUID_BOUNDS: FluidBounds = { minX: -5.8, maxX: 5.8, minZ: -6, maxZ: 4.4 };
 
 export type FogRenderMode = 'slices' | 'raymarch';
 
@@ -108,6 +129,7 @@ export class FluidFire {
   readonly particleCount: number;
   readonly width: number;
   readonly height: number;
+  readonly visuals: boolean;
   readonly group = new THREE.Group();
 
   readonly parameters: FluidFireParameters = {
@@ -177,6 +199,11 @@ export class FluidFire {
   private readonly uGroundFlow = uniform(0);
   private readonly roomEnabled = uniform(0);
   private readonly roomCenter = uniform(new THREE.Vector2());
+  private readonly roomMin = uniform(new THREE.Vector2(DEFAULT_FLUID_BOUNDS.minX, DEFAULT_FLUID_BOUNDS.minZ));
+  private readonly roomMax = uniform(new THREE.Vector2(DEFAULT_FLUID_BOUNDS.maxX, DEFAULT_FLUID_BOUNDS.maxZ));
+  // Ground-flow baseline: a density floor the field relaxes toward (ambient mist).
+  private readonly uAmbientDensity = uniform(0);
+  private readonly uAmbientHeat = uniform(0);
   private readonly uGroundWindVelocity = uniform(new THREE.Vector2());
   private readonly uScrollCells = uniform(new THREE.Vector2());
   private readonly uEmitterUv = uniform(new THREE.Vector2(0.5, 0.045));
@@ -191,9 +218,10 @@ export class FluidFire {
     { length: GROUND_STAMP_COUNT },
     () => uniform(new THREE.Vector4(0.5, 0.5, 0.01, 0)),
   );
+  // XY = velocity in cells per second, Z = heat (temperature channel) the stamp injects.
   private readonly uFlowStampVelocity = Array.from(
     { length: GROUND_STAMP_COUNT },
-    () => uniform(new THREE.Vector2()),
+    () => uniform(new THREE.Vector4()),
   );
   // XYZ = centre/radius in UV, W = outward velocity in cells per second.
   // Kept separate from density stamps so a spell can first displace existing
@@ -236,12 +264,12 @@ export class FluidFire {
   private readonly scrollScalar: ComputeNode[] = [];
   private readonly scrollPressure: ComputeNode[] = [];
   private readonly updateSources: ComputeNode;
-  private readonly initializeParticles: ComputeNode;
+  private readonly initializeParticles: ComputeNode | null = null;
 
-  private readonly sprite: THREE.Sprite;
-  private readonly debugPlanes: [THREE.Mesh, THREE.Mesh];
-  private readonly fogSlices: [THREE.InstancedMesh, THREE.InstancedMesh];
-  private readonly fogRaymarches: [THREE.Mesh, THREE.Mesh];
+  private readonly sprite: THREE.Sprite | null = null;
+  private readonly debugPlanes: [THREE.Mesh, THREE.Mesh] | null = null;
+  private readonly fogSlices: [THREE.InstancedMesh, THREE.InstancedMesh] | null = null;
+  private readonly fogRaymarches: [THREE.Mesh, THREE.Mesh] | null = null;
   private pointerTtl = 0;
   private readonly pendingScrollCells = new THREE.Vector2();
   private elapsed = 0;
@@ -254,6 +282,8 @@ export class FluidFire {
     this.particleCount = options.particleCount ?? 100_000;
     this.width = options.width ?? 4;
     this.height = options.height ?? 6;
+    this.visuals = options.visuals ?? true;
+    if (options.bounds) this.setBounds(options.bounds);
 
     this.positionAge = instancedArray(this.particleCount, 'vec4');
     this.velocityLife = instancedArray(this.particleCount, 'vec4');
@@ -333,28 +363,32 @@ export class FluidFire {
           this.scalar[1 - scalarRead]!,
           `Advect scalars S${scalarRead} V${velocityRead}`,
         );
-        this.updateParticles[velocityRead]![scalarRead] = this.buildParticleUpdate(
-          this.velocity[velocityRead]!,
-          this.scalar[scalarRead]!,
-          `Update particles V${velocityRead} S${scalarRead}`,
-        );
+        if (this.visuals) {
+          this.updateParticles[velocityRead]![scalarRead] = this.buildParticleUpdate(
+            this.velocity[velocityRead]!,
+            this.scalar[scalarRead]!,
+            `Update particles V${velocityRead} S${scalarRead}`,
+          );
+        }
       }
     }
 
-    this.initializeParticles = this.buildParticleInitialization();
-    this.sprite = this.makeParticles();
-    this.fogSlices = [this.makeFogSlices(this.scalar[0]), this.makeFogSlices(this.scalar[1])];
-    this.fogRaymarches = [this.makeFogRaymarch(this.scalar[0]), this.makeFogRaymarch(this.scalar[1])];
-    this.debugPlanes = [this.makeDebugPlane(this.scalar[0]), this.makeDebugPlane(this.scalar[1])];
-    this.makeSceneDecor();
+    if (this.visuals) {
+      this.initializeParticles = this.buildParticleInitialization();
+      this.sprite = this.makeParticles();
+      this.fogSlices = [this.makeFogSlices(this.scalar[0]), this.makeFogSlices(this.scalar[1])];
+      this.fogRaymarches = [this.makeFogRaymarch(this.scalar[0]), this.makeFogRaymarch(this.scalar[1])];
+      this.debugPlanes = [this.makeDebugPlane(this.scalar[0]), this.makeDebugPlane(this.scalar[1])];
+      this.makeSceneDecor();
+    }
 
     this.scene.add(this.group);
     this.renderer.compute(this.updateSources);
-    this.renderer.compute(this.initializeParticles);
+    if (this.initializeParticles) this.renderer.compute(this.initializeParticles);
   }
 
   get dispatchesPerFrame(): number {
-    return Math.max(1, Math.round(this.parameters.pressureIterations)) + 8 + this.slashDispatches;
+    return Math.max(1, Math.round(this.parameters.pressureIterations)) + (this.visuals ? 8 : 7) + this.slashDispatches;
   }
 
   /** Internal field access for specialised renderers such as GroundFlowVolume. */
@@ -432,13 +466,18 @@ export class FluidFire {
     this.uColliderVelocity.value.set(0, 0);
   }
 
-  /** Configures one world-to-UV converted density/velocity stamp for ground flow. */
+  /**
+   * Configures one world-to-UV converted density/velocity stamp for ground flow.
+   * `heat` (0..2) is written to the temperature channel, which renderers can
+   * use as a second colour (warm smoke over cool mist).
+   */
   setGroundStamp(
     index: number,
     uvPosition: THREE.Vector2,
     radiusUv: number,
     density: number,
     velocityCellsPerSecond = new THREE.Vector2(),
+    heat = 0,
   ): void {
     const shape = this.uFlowStampShape[index];
     const velocity = this.uFlowStampVelocity[index];
@@ -450,7 +489,20 @@ export class FluidFire {
       THREE.MathUtils.clamp(radiusUv, 0.005, 0.3),
       inside ? THREE.MathUtils.clamp(density, 0, 2) : 0,
     );
-    velocity.value.copy(velocityCellsPerSecond).clampLength(0, 120);
+    const clamped = velocityCellsPerSecond.clone().clampLength(0, 120);
+    velocity.value.set(clamped.x, clamped.y, THREE.MathUtils.clamp(heat, 0, 2), 0);
+  }
+
+  /** Baseline the ground-flow density (and temperature) relax toward: ambient mist. */
+  setAmbientDensity(density: number, heat = 0): void {
+    this.uAmbientDensity.value = THREE.MathUtils.clamp(density, 0, 1.5);
+    this.uAmbientHeat.value = THREE.MathUtils.clamp(heat, 0, 2);
+  }
+
+  /** World-space rectangle used by the room mask (setRoomBounds enables it). */
+  setBounds(bounds: FluidBounds): void {
+    this.roomMin.value.set(bounds.minX, bounds.minZ);
+    this.roomMax.value.set(bounds.maxX, bounds.maxZ);
   }
 
   clearGroundStamp(index: number): void {
@@ -488,7 +540,10 @@ export class FluidFire {
     this.roomEnabled.value=enabled?1:0;this.roomCenter.value.copy(center);
   }
   private roomMask(fieldUv:TSLNode):TSLNode {
-    return mix(float(1),roomMaskNode(fieldUv.sub(0.5).mul(vec2(this.width,this.height)).add(this.roomCenter)),this.roomEnabled);
+    const at = fieldUv.sub(0.5).mul(vec2(this.width,this.height)).add(this.roomCenter);
+    const inside = float(at.x.greaterThanEqual(this.roomMin.x).and(at.x.lessThanEqual(this.roomMax.x))
+      .and(at.y.greaterThanEqual(this.roomMin.y)).and(at.y.lessThanEqual(this.roomMax.y)).select(1,0));
+    return mix(float(1),inside,this.roomEnabled);
   }
 
   setGroundSlash(index: number, uv: THREE.Vector2, halfLength: number, width: number, forward: THREE.Vector2, speed: number): void {
@@ -623,6 +678,7 @@ export class FluidFire {
       this.slashReady=true;
     }
 
+    if (!this.visuals || !this.debugPlanes || !this.fogSlices || !this.fogRaymarches) return;
     this.renderer.compute(this.updateParticles[this.velocityIndex]![this.scalarIndex]!);
 
     this.debugPlanes[0].visible = this.parameters.showField && this.scalarIndex === 0;
@@ -881,16 +937,18 @@ export class FluidFire {
   private groundStampSample(fieldUv: TSLNode): TSLNode {
     const density = float(0).toVar('groundStampDensity');
     const velocity = vec2(0).toVar('groundStampVelocity');
+    const heat = float(0).toVar('groundStampHeat');
 
     for (let index = 0; index < GROUND_STAMP_COUNT; index += 1) {
       const shape = this.uFlowStampShape[index]!;
       const stampVelocity = this.uFlowStampVelocity[index]!;
       const influence = smoothstep(shape.z, float(0), distance(fieldUv, shape.xy)).mul(shape.w);
       density.addAssign(influence);
-      velocity.addAssign(stampVelocity.mul(influence));
+      velocity.addAssign(stampVelocity.xy.mul(influence));
+      heat.assign(max(heat, stampVelocity.z.mul(influence)));
     }
 
-    return vec3(density.min(1), velocity);
+    return vec4(density.min(1), velocity, heat);
   }
 
   private groundBlastForce(fieldUv: TSLNode, slashOnly = false): TSLNode {
@@ -1142,8 +1200,19 @@ export class FluidFire {
       // Ground sources replenish gradually: a per-frame minimum instantly erases cuts.
       // The original fire source keeps its immediate injection behavior.
       const refill = mix(float(1),float(1).sub(exp(this.uDelta.mul(-1.4))),this.uGroundFlow);
-      advected.x.assign(mix(advected.x,max(advected.x, source.mul(this.uInjectionDensity)),refill));
-      advected.y.assign(mix(advected.y,max(advected.y, source.mul(this.uInjectionTemperature)),refill));
+      // Ambient mist is a slow floor with a world-anchored ripple, so a bare field reads as
+      // drifting banks rather than a flat sheet.
+      const ambientRipple = fieldUv.x.mul(23).add(fieldUv.y.mul(17)).add(this.uTime.mul(0.21)).sin()
+        .mul(fieldUv.y.mul(29).sub(fieldUv.x.mul(11)).sub(this.uTime.mul(0.17)).sin()).mul(0.3).add(0.7);
+      const ambient = this.uAmbientDensity.mul(ambientRipple).mul(this.uGroundFlow);
+      // ~0.8 s time constant: weather mist should read within a couple of seconds of the change.
+      const ambientBlend = float(1).sub(exp(this.uDelta.mul(-1.2)));
+      const densityTarget = max(source.mul(this.uInjectionDensity), ambient);
+      advected.x.assign(mix(advected.x,max(advected.x, densityTarget),refill));
+      advected.x.assign(mix(advected.x, max(advected.x, ambient), ambientBlend.mul(this.uGroundFlow)));
+      const groundHeat = max(groundSource.w, this.uAmbientHeat.mul(ambientRipple));
+      const heatTarget = mix(source.mul(this.uInjectionTemperature), max(source.mul(this.uInjectionTemperature), groundHeat.mul(source.add(ambient).min(1))), this.uGroundFlow);
+      advected.y.assign(mix(advected.y,max(advected.y, heatTarget),refill));
 
       If(this.groundObstacleMask(fieldUv).greaterThan(0.5), () => {
         advected.assign(vec2(0));
