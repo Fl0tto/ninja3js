@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import type { UniformNode } from 'three/webgpu';
 import {
+  If,
   Loop,
   cameraPosition,
   exp,
@@ -178,6 +179,9 @@ export function mistMarch(frame: MistFrame, inputs: MistMarchInputs): TSLNode {
   const radiance = vec3(0).toVar();
   const noise = screenCoordinate.xy.dot(vec2(0.06711056, 0.00583715)).fract().mul(52.9829189).fract();
   const offset = mix(float(0.5), noise.mul(0.9).add(0.05), frame.jitter);
+  // A ray that never enters the slab (the sky, a wall above it, a surface in front of it) skips the
+  // march: in a full-screen pass that is most of the picture.
+  If(step.greaterThan(0), () => {
   Loop({ start: 0, end: frame.steps, type: 'int' }, ({ i }: any) => {
     const point = origin.add(direction.mul(start.add(step.mul(float(i).add(offset)))));
     const fieldUv = mistWindowUv(frame, point.xz);
@@ -206,6 +210,7 @@ export function mistMarch(frame: MistFrame, inputs: MistMarchInputs): TSLNode {
     }
     radiance.addAssign(lighting.mul(alpha).mul(transmittance));
     transmittance.mulAssign(float(1).sub(alpha));
+  });
   });
   const opacity = float(1).sub(transmittance);
   return vec4(radiance.div(opacity.max(0.0001)), opacity);
