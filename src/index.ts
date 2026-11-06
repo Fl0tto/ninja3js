@@ -13,7 +13,11 @@
  */
 export { GroundMist } from './GroundMist';
 export type { GroundMistOptions, MistEmitOptions } from './GroundMist';
-export { FluidFire, DEFAULT_FLUID_BOUNDS } from './FluidFire';
+export { mistMarch, mistWindowUv, createMistFrame, setMistFrameWindow, sampleField } from './MistMarch';
+export type { MistFrame, MistFrameOptions, MistMarchInputs, MistPointLight, MistUniform, MistIntUniform } from './MistMarch';
+export { fieldSample } from './FieldSampler';
+export type { FieldSampleNodes } from './FieldSampler';
+export { FluidFire, DEFAULT_FLUID_BOUNDS, MAX_GROUND_MOVERS, MAX_GROUND_OBSTACLES, GROUND_VORTEX_COUNT } from './FluidFire';
 export type { FluidFireOptions, FluidFireParameters, FluidEmitterOptions, FluidBounds, FogRenderMode } from './FluidFire';
 export { GroundFlowVolume, getGroundFlowInteractionProfile } from './GroundFlowVolume';
 export type { GroundFlowVolumeOptions, GroundFlowMaterialPreset, GroundFlowInteractionProfile } from './GroundFlowVolume';

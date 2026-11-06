@@ -1,6 +1,6 @@
 {
   "name": "ninja3js",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Stylised ground mist, GPU fluid and ground-response effects for Three.js WebGPU (clean-room, FluidNinja-inspired).",
   "private": true,
   "type": "module",
@@ -26,7 +26,7 @@
     "smoke:mist": "node tools/mist-smoke.mjs"
   },
   "peerDependencies": {
-    "three": ">=0.185.0 <0.190.0"
+    "three": ">=0.184.0 <0.190.0"
   },
   "dependencies": {},
   "devDependencies": {

@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import type { UniformNode } from 'three/webgpu';
 import { roomMaskNode } from './DungeonLayout';
 import {
   attribute,
@@ -33,6 +34,7 @@ import {
 import { flatTerrain, type TerrainHeight } from './TerrainHeight';
 import { GroundResponseField, type GroundResponseKind } from './GroundResponseField';
 import { FluidFire } from './FluidFire';
+import { sampleField } from './MistMarch';
 import { SimulationWindow, type SimulationWindowOptions, type SimulationWindowShift } from './SimulationWindow';
 
 
@@ -229,7 +231,8 @@ export class GroundFlowVolume {
   private encounter = false;
   private readonly encounterWeight = uniform(0);
   private readonly terrainResponseWeight = uniform(0);
-  private readonly fogSteps = uniform(48, 'int');
+  // Typed by hand: three 0.184's typings have no 'int' overload for uniform().
+  private readonly fogSteps = (uniform as unknown as (v: number, t: string) => UniformNode<'int', number>)(48, 'int');
   private readonly fogJitter = uniform(1);
   private readonly pointLights = Array.from({length:3}, () => ({
     positionRange: uniform(new THREE.Vector4(0,0,0,1)),
@@ -679,9 +682,9 @@ export class GroundFlowVolume {
       const noise = screenCoordinate.xy.dot(vec2(0.06711056,0.00583715)).fract().mul(52.9829189).fract();
       const offset = mix(float(0.5),noise.mul(0.9).add(0.05),this.fogJitter);
       Loop({start:0,end:this.fogSteps,type:'int'}, ({i}) => {
-        const point = cameraPosition.add(direction.mul(start.add(step.mul(float(i).add(offset)))));
+        const point = cameraPosition.add(direction.mul(start.add(step.mul(float(i as any).add(offset)))));
         const fieldUv = point.xz.sub(this.worldCenter).div(vec2(this.flow.width,this.flow.height)).add(0.5);
-        const sample = texture(fieldTexture,fieldUv.clamp(0,1)).level(float(0));
+        const sample = sampleField(fieldTexture,fieldUv.clamp(0,1));
         const height = point.y.sub(this.terrain.node(point.xz)).sub(this.baseHeight);
         // Broad world-anchored lobes soften the otherwise level volume ceiling.
         const lobe = point.x.mul(0.83).add(point.z.mul(0.37)).sin()
@@ -696,7 +699,7 @@ export class GroundFlowVolume {
         const density = sample.r.clamp(0,1.6).mul(smoothstep(this.densityEdge.x,this.densityEdge.y,sample.r))
           .mul(heightProfile).mul(domain).mul(breakup);
         const alpha = float(1).sub(exp(density.mul(step).mul(this.opticalDepthScale).mul(-0.62)));
-        const blocker = texture(fieldTexture,fieldUv.add(this.lightUvDirection.mul(this.lightProbeDistance)).clamp(0,1)).level(float(0)).r;
+        const blocker = sampleField(fieldTexture,fieldUv.add(this.lightUvDirection.mul(this.lightProbeDistance)).clamp(0,1)).r;
         const lighting = mix(this.ambientColor, this.lightColor, exp(blocker.mul(-1.1)).mul(0.65).add(0.2)).toVar();
         for(const light of this.pointLights) {
           const delta = light.positionRange.xyz.sub(point);

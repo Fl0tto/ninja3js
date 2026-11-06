@@ -1,4 +1,29 @@
-# Active checkpoint: 2026-10-28
+# Active checkpoint: 2026-11-06
+
+ninja3js 0.3.0 is the fluid layer of webmmo-v2's dungeons (branch `feat/floor-mist` there). What the
+host needed, and now has:
+
+- `three` peer `>=0.184 <0.190`: webmmo-v2 stays on 0.184. The library is type-checked against both
+  0.184 and 0.185 typings (a scratch install of `@types/three@0.184` plus `tsc` on `src/index.ts`);
+  `sampleField()` in `MistMarch.ts` and a hand-typed int uniform cover the places the typings disagree.
+- Headless mode: `GroundMist({ render: false })` builds no volume meshes. The march moved to
+  `src/MistMarch.ts` as `mistMarch(frame, { field, opaqueDistance, origin, direction })` with a live
+  `MistFrame` of uniforms, because webmmo's look pass renders into an MRT whose depth-stencil texture
+  WebGPU cannot sample: the host reconstructs the opaque distance from its own view-z channel and
+  composites the mist in its full-screen pass. `densityNode` / `velocityNode` are texture nodes re-pointed
+  every `update()`, so the host's materials never rebuild.
+- Force primitives: `slash()` (the solver's curved band, shared with the blast slots), `vortex()` (three
+  new swirl slots in `FluidFire`, a Rankine profile steered in rather than shoved), `movers` / `obstacles`
+  construction-time slot counts (1..12), and `mover()` / `setObstacle()` return `false` when full instead of
+  dropping silently.
+- `fieldSample()` in `src/FieldSampler.ts`: world-space velocity (m/s) and density at a world X/Z, for grass
+  and tree materials that move with the flow.
+- `mist.html` cycles blast → slash → vortex so each primitive has a smoke path.
+
+Open: surface/room identity and multi-floor isolation; obstacles are still circles and the bounds one
+rectangle (webmmo derives pillar circles from its box statics for now).
+
+# Previous checkpoint: 2026-10-28
 
 FN resumed as a package for a different host than planned: the arena 3D battle client
 (Fl0tto/arena-showdown, M4). The MMO return milestone below still stands for the MMO.

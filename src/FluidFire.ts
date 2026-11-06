@@ -51,7 +51,21 @@ export interface FluidFireOptions {
    * when setRoomBounds() enables it. Defaults to the demo training room.
    */
   bounds?: FluidBounds;
+  /**
+   * Velocity-only wake slots for moving objects (players, enemies). Each slot is unrolled
+   * into the advection shader, so a slot costs the same whether or not it is in use.
+   * 1..MAX_GROUND_MOVERS; default 4.
+   */
+  moverSlots?: number;
+  /** Circular static obstacle slots the flow goes around (pillars, trunks). 1..MAX_GROUND_OBSTACLES; default 4. */
+  obstacleSlots?: number;
 }
+
+/** Upper bounds for the per-cell unrolled slot lists; above these the shader cost becomes noticeable. */
+export const MAX_GROUND_MOVERS = 12;
+export const MAX_GROUND_OBSTACLES = 12;
+/** Swirl slots: a channelled spell or a tornado spins the mist around a point. */
+export const GROUND_VORTEX_COUNT = 3;
 
 /** Axis-aligned world-space X/Z rectangle, in metres. */
 export interface FluidBounds {
@@ -105,8 +119,8 @@ type ComputeNode = any;
 const SOURCE_BRUSH_COUNT = 8;
 const GROUND_STAMP_COUNT = 8;
 const GROUND_BLAST_COUNT = 5;
-const GROUND_MOVER_COUNT = 4;
-const GROUND_OBSTACLE_COUNT = 4;
+const DEFAULT_GROUND_MOVER_COUNT = 4;
+const DEFAULT_GROUND_OBSTACLE_COUNT = 4;
 const FOG_SLICE_COUNT = 8;
 const FOG_RAYMARCH_STEP_COUNT = 6;
 
@@ -130,6 +144,8 @@ export class FluidFire {
   readonly width: number;
   readonly height: number;
   readonly visuals: boolean;
+  readonly moverSlots: number;
+  readonly obstacleSlots: number;
   readonly group = new THREE.Group();
 
   readonly parameters: FluidFireParameters = {
@@ -235,17 +251,20 @@ export class FluidFire {
   // Dynamic world objects use a dedicated velocity-only stamp list. They do
   // not consume persistent density-source slots and can be paired with a
   // static obstacle mask when the actor should also exclude fog volume.
-  private readonly uGroundMoverShape = Array.from(
-    { length: GROUND_MOVER_COUNT },
+  // Sized from the options, so they are filled in the constructor.
+  private readonly uGroundMoverShape: TSLNode[];
+  private readonly uGroundMoverVelocity: TSLNode[];
+  private readonly uGroundObstacleShape: TSLNode[];
+  // Swirls: XY = centre in UV, Z = radius in UV, W = active. The spin uniform holds the
+  // tangential speed at the rim (cells per second, sign = direction) in X and the radial
+  // speed (positive pulls inward) in Y.
+  private readonly uGroundVortexShape = Array.from(
+    { length: GROUND_VORTEX_COUNT },
     () => uniform(new THREE.Vector4(0.5, 0.5, 0.01, 0)),
   );
-  private readonly uGroundMoverVelocity = Array.from(
-    { length: GROUND_MOVER_COUNT },
+  private readonly uGroundVortexSpin = Array.from(
+    { length: GROUND_VORTEX_COUNT },
     () => uniform(new THREE.Vector2()),
-  );
-  private readonly uGroundObstacleShape = Array.from(
-    { length: GROUND_OBSTACLE_COUNT },
-    () => uniform(new THREE.Vector4(0.5, 0.5, 0.01, 0)),
   );
 
   private readonly advectVelocity: ComputeNode[][] = [[], []];
@@ -283,6 +302,11 @@ export class FluidFire {
     this.width = options.width ?? 4;
     this.height = options.height ?? 6;
     this.visuals = options.visuals ?? true;
+    this.moverSlots = THREE.MathUtils.clamp(Math.round(options.moverSlots ?? DEFAULT_GROUND_MOVER_COUNT), 1, MAX_GROUND_MOVERS);
+    this.obstacleSlots = THREE.MathUtils.clamp(Math.round(options.obstacleSlots ?? DEFAULT_GROUND_OBSTACLE_COUNT), 1, MAX_GROUND_OBSTACLES);
+    this.uGroundMoverShape = Array.from({ length: this.moverSlots }, () => uniform(new THREE.Vector4(0.5, 0.5, 0.01, 0)));
+    this.uGroundMoverVelocity = Array.from({ length: this.moverSlots }, () => uniform(new THREE.Vector2()));
+    this.uGroundObstacleShape = Array.from({ length: this.obstacleSlots }, () => uniform(new THREE.Vector4(0.5, 0.5, 0.01, 0)));
     if (options.bounds) this.setBounds(options.bounds);
 
     this.positionAge = instancedArray(this.particleCount, 'vec4');
@@ -403,6 +427,11 @@ export class FluidFire {
 
   get currentScalarFieldIndex(): number {
     return this.scalarIndex;
+  }
+
+  /** Index into `velocityFields` of the field that holds this step's result. */
+  get currentVelocityFieldIndex(): number {
+    return this.velocityIndex;
   }
 
   /** Compute continues while the fire benchmark's scene objects are hidden. */
@@ -562,7 +591,7 @@ export class FluidFire {
   ): void {
     const shape = this.uGroundMoverShape[index];
     const velocity = this.uGroundMoverVelocity[index];
-    if (!shape || !velocity) throw new Error(`Ground mover index must be between 0 and ${GROUND_MOVER_COUNT - 1}.`);
+    if (!shape || !velocity) throw new Error(`Ground mover index must be between 0 and ${this.moverSlots - 1}.`);
     const inside = uvPosition.x >= 0 && uvPosition.x <= 1 && uvPosition.y >= 0 && uvPosition.y <= 1;
     shape.value.set(
       THREE.MathUtils.clamp(uvPosition.x, 0, 1),
@@ -580,7 +609,7 @@ export class FluidFire {
   /** Configures one circular static obstacle in local field UV coordinates. */
   setGroundObstacle(index: number, uvPosition: THREE.Vector2, radiusUv: number, active = true): void {
     const shape = this.uGroundObstacleShape[index];
-    if (!shape) throw new Error(`Ground obstacle index must be between 0 and ${GROUND_OBSTACLE_COUNT - 1}.`);
+    if (!shape) throw new Error(`Ground obstacle index must be between 0 and ${this.obstacleSlots - 1}.`);
     const inside = uvPosition.x >= 0 && uvPosition.x <= 1 && uvPosition.y >= 0 && uvPosition.y <= 1;
     shape.value.set(
       THREE.MathUtils.clamp(uvPosition.x, 0, 1),
@@ -592,6 +621,31 @@ export class FluidFire {
 
   clearGroundObstacle(index: number): void {
     this.setGroundObstacle(index, new THREE.Vector2(0.5, 0.5), 0.01, false);
+  }
+
+  /**
+   * Configures one swirl in local field UV coordinates: the flow inside `radiusUv` is steered
+   * toward a rotation of `rimCellsPerSecond` at the rim (sign picks the direction; the core spins
+   * slower so the centre does not tear) plus a radial component, positive toward the centre.
+   * Velocity only: a vortex moves the mist that is there, it adds none.
+   */
+  setGroundVortex(index: number, uvPosition: THREE.Vector2, radiusUv: number, rimCellsPerSecond: number, inwardCellsPerSecond = 0): void {
+    const shape = this.uGroundVortexShape[index];
+    const spin = this.uGroundVortexSpin[index];
+    if (!shape || !spin) throw new Error(`Ground vortex index must be between 0 and ${GROUND_VORTEX_COUNT - 1}.`);
+    const inside = uvPosition.x >= 0 && uvPosition.x <= 1 && uvPosition.y >= 0 && uvPosition.y <= 1;
+    shape.value.set(
+      THREE.MathUtils.clamp(uvPosition.x, 0, 1),
+      THREE.MathUtils.clamp(uvPosition.y, 0, 1),
+      THREE.MathUtils.clamp(radiusUv, 0.005, 0.35),
+      inside ? 1 : 0,
+    );
+    spin.value.set(THREE.MathUtils.clamp(rimCellsPerSecond, -140, 140), THREE.MathUtils.clamp(inwardCellsPerSecond, -140, 140));
+  }
+
+  clearGroundVortex(index: number): void {
+    this.setGroundVortex(index, new THREE.Vector2(0.5, 0.5), 0.01, 0, 0);
+    this.uGroundVortexShape[index]!.value.w = 0;
   }
 
   /** Sets a broad ground-flow target velocity in simulation cells per second. */
@@ -970,7 +1024,7 @@ export class FluidFire {
   private groundMoverSample(fieldUv: TSLNode): TSLNode {
     const influenceTotal = float(0).toVar('groundMoverInfluence');
     const velocity = vec2(0).toVar('groundMoverVelocity');
-    for (let index = 0; index < GROUND_MOVER_COUNT; index += 1) {
+    for (let index = 0; index < this.moverSlots; index += 1) {
       const shape = this.uGroundMoverShape[index]!;
       const moverVelocity = this.uGroundMoverVelocity[index]!;
       const influence = smoothstep(shape.z, float(0), distance(fieldUv, shape.xy)).mul(shape.w);
@@ -980,9 +1034,35 @@ export class FluidFire {
     return vec3(influenceTotal.min(1), velocity);
   }
 
+  /**
+   * Swirl target velocity: a Rankine-style vortex per slot, solid-body rotation in the core
+   * (speed grows with the distance from the centre) and the rim speed outside it, fading at the
+   * radius. Returns (influence, velocity) like the mover sample so the two blend the same way.
+   */
+  private groundVortexSample(fieldUv: TSLNode): TSLNode {
+    const influenceTotal = float(0).toVar('groundVortexInfluence');
+    const velocity = vec2(0).toVar('groundVortexVelocity');
+    for (let index = 0; index < GROUND_VORTEX_COUNT; index += 1) {
+      const shape = this.uGroundVortexShape[index]!;
+      const spin = this.uGroundVortexSpin[index]!;
+      // Metres, so the swirl stays round on a non-square window.
+      const offset = fieldUv.sub(shape.xy).mul(vec2(this.width, this.height));
+      const radius = shape.z.mul(Math.min(this.width, this.height));
+      const metric = offset.length().div(radius.max(0.001));
+      const influence = float(1).sub(smoothstep(0.55, 1, metric)).mul(shape.w);
+      const outward = offset.div(offset.length().add(0.0001));
+      const tangent = vec2(outward.y.negate(), outward.x);
+      const coreRamp = metric.mul(2.2).min(1);
+      const target = tangent.mul(spin.x).mul(coreRamp).sub(outward.mul(spin.y).mul(coreRamp));
+      influenceTotal.addAssign(influence);
+      velocity.addAssign(target.mul(influence));
+    }
+    return vec3(influenceTotal.min(1), velocity);
+  }
+
   private groundObstacleMask(fieldUv: TSLNode): TSLNode {
     const mask = float(0).toVar('groundObstacleMask');
-    for (let index = 0; index < GROUND_OBSTACLE_COUNT; index += 1) {
+    for (let index = 0; index < this.obstacleSlots; index += 1) {
       const shape = this.uGroundObstacleShape[index]!;
       const influence = smoothstep(shape.z, shape.z.mul(0.78), distance(fieldUv, shape.xy)).mul(shape.w);
       mask.assign(max(mask, influence));
@@ -1066,6 +1146,11 @@ export class FluidFire {
       const mover = this.groundMoverSample(fieldUv);
       const moverBlend = mover.x.mul(this.uDelta).mul(18).clamp(0, 1);
       velocity.assign(mix(velocity, mover.yz, moverBlend));
+
+      // A swirl steers the flow rather than shoving it, so it builds over a few frames and holds.
+      const vortex = this.groundVortexSample(fieldUv);
+      const vortexBlend = vortex.x.mul(this.uGroundFlow).mul(this.uDelta).mul(9).clamp(0, 1);
+      velocity.assign(mix(velocity, vortex.yz, vortexBlend));
 
       If(this.groundObstacleMask(fieldUv).greaterThan(0.5), () => {
         velocity.assign(vec2(0));
@@ -1549,7 +1634,8 @@ export class FluidFire {
       .mul(this.uFogDensity)
       .mul(this.uFogDepth)
       .negate();
-    const opacity = float(1).sub(exp(extinction));
+    // exp() on a vec3: three 0.184's typings only declare the float overload.
+    const opacity = float(1).sub((exp as unknown as (n: TSLNode) => TSLNode)(extinction));
     const depthSeparation = viewportLinearDepth
       .sub(linearDepth())
       .mul(cameraFar.sub(cameraNear))

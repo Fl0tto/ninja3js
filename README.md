@@ -9,12 +9,14 @@ contains the demo's implementation history.
 ## Using it as a package
 
 ```sh
-pnpm add git+https://github.com/Fl0tto/ninja3js.git#v0.2.0   # or #<commit sha>
+pnpm add git+https://github.com/Fl0tto/ninja3js.git#v0.3.0   # or #<commit sha>
 # or link a sibling checkout while hacking on both: "ninja3js": "link:../ninja3js"
 ```
 
-`three` is a peer dependency (`>=0.185 <0.190`); the package ships TypeScript source through its
-`exports`, so any Vite/esbuild host consumes it without a build step. With a `link:` checkout, dedupe
+`three` is a peer dependency (`>=0.184 <0.190`); the package ships TypeScript source through its
+`exports`, so any Vite/esbuild host consumes it without a build step. The host compiles that source
+with its own `@types/three`, so the library is type-checked against both 0.184 and 0.185 typings (the
+few places they disagree are typed loosely on purpose). With a `link:` checkout, dedupe
 `three` in the host's Vite config and map `three*` to the host's `@types/three` in its tsconfig
 `paths`, or the two checkouts bring two copies.
 
@@ -28,9 +30,47 @@ mist.setPalette('#dfe7f1', '#ff9a4a');                  // cool mist, hot smoke
 mist.setWind(new THREE.Vector3(2, 0, 0.5));
 mist.emit(position, 0.8, 1, { heat: 1.2, duration: 1.5 }); // a smoke source for 1.5 s
 mist.blast(position, 2.5, 5);                           // shove the mist outward
-mist.mover('player', position, velocity, 0.5);          // a wake, every frame while moving
+mist.slash(position, yaw, 2.2, 0.5, 9);                 // a blade stroke: a curved band, 2.2 m half-length
+mist.vortex(position, 3, 4, 0.6, 1.5, 'orbit');         // a swirl: 4 m/s at the rim, drawn in, keyed
+mist.mover('player', position, velocity, 0.5);          // a wake, every frame while moving (false when full)
+mist.setObstacle('pillar-nw', position, 1.1);           // the mist flows around it
 mist.update(dt);                                        // before renderer.render()
 ```
+
+Slot counts: 8 emits, 5 blasts/slashes, 3 vortices, and `movers` / `obstacles` chosen at construction
+(default 4 each, up to 12; every slot is unrolled into the solver shader, so size them for the host).
+
+### Drawing the mist yourself
+
+A host with its own depth source (a deferred look pass, a G-buffer) runs the solver headless and
+composites the same picture in its own pass:
+
+```ts
+import { GroundMist, createMistFrame, mistMarch, fieldSample } from 'ninja3js';
+import { texture } from 'three/tsl';
+
+// Once, when the host's pass is built: a frame and texture nodes the host owns.
+const frame = createMistFrame();
+const density = texture(placeholder);
+const velocity = texture(placeholder);
+// in the host's full-screen pass, per pixel:
+const march = mistMarch(frame, { field: density, opaqueDistance, origin, direction });
+colour = mix(colour, march.xyz, march.w);
+// in a grass or tree material:
+const { velocity: flow } = fieldSample(frame, { velocity, density }, positionWorld.xz);
+
+// Per world (a room now, a scrolling window later), without touching the compiled pass:
+const mist = new GroundMist(renderer, { width: 44, depth: 44, bounds, render: false, movers: 10, obstacles: 8, frame });
+// Per frame, after mist.update(dt):
+density.value = mist.densityTexture;
+velocity.value = mist.velocityTexture;
+```
+
+The frame holds the march's live uniforms (window centre and size, cell size, heights, bounds,
+palette, look, lights), so one compiled program serves every window the host builds; only the
+terrain sampler is baked in. A `GroundMist` without `frame` makes its own, and its `densityNode` /
+`velocityNode` are re-pointed to the current ping-pong texture every `update()`. `GroundMist`'s own
+box volume runs the same `mistMarch` with `viewportLinearDepth` as its depth.
 
 `GroundMist` is the host-facing class: one bounded X/Z window (fixed, or scrolling with
 `follow()`), world units everywhere, slot allocation and lifetimes inside. It needs the WebGPU

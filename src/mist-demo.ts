@@ -1,7 +1,8 @@
 /**
  * The smallest useful host: a lit arena floor, two capsules walking through ground mist, a
  * blast every few seconds and a warm smoke source. Everything the host does goes through the
- * GroundMist world-unit API; nothing here knows about textures or UVs.
+ * GroundMist world-unit API; nothing here knows about textures or UVs. A sword slash and a swirl
+ * take turns with the blast so every force primitive has a smoke path.
  *
  * `window.__mist` exposes the objects for the headless smoke (tools/mist-smoke.mjs).
  */
@@ -51,6 +52,7 @@ let t = 0;
 let last = performance.now();
 let frames = 0;
 let nextBlast = 2;
+let forceCycle = 0;
 const velocity = new THREE.Vector3();
 const prevA = a.position.clone();
 const prevB = b.position.clone();
@@ -71,7 +73,10 @@ function tick(now: number): void {
   mist.emit(smoke, 0.7, 0.9, { heat: 1.2, velocity: new THREE.Vector3(0.3, 0, 0.1) }, 'smoke');
   if (t > nextBlast) {
     nextBlast = t + 3.5;
-    mist.blast(new THREE.Vector3(0, 0, 0), 2.5, 5, 0.3);
+    const phase = forceCycle++ % 3;
+    if (phase === 0) mist.blast(new THREE.Vector3(0, 0, 0), 2.5, 5, 0.3);
+    else if (phase === 1) mist.slash(new THREE.Vector3(0, 0, 0), t * 0.7, 2.2, 0.5, 9, 0.25);
+    else mist.vortex(new THREE.Vector3(0, 0, 0), 3, 4, 0.6, 1.6);
     mist.setPointLight(0, new THREE.Vector3(0, 0.5, 0), '#ffd8a0', 6, 4);
   }
   mist.setPointLight(0, new THREE.Vector3(0, 0.5, 0), '#ffd8a0', Math.max(0, 6 - (t - (nextBlast - 3.5)) * 8), 4);
